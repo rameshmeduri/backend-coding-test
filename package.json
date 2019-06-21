@@ -7,8 +7,11 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "mocha tests",
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "npm run unit-test && npm run check-coverage",
+    "test:load": "forever start ./index.js && sleep 1 && artillery run load.yml && forever stop ./index.js",
+    "unit-test": "nyc --reporter=html --reporter=text mocha tests",
+    "check-coverage": "nyc check-coverage"
   },
   "keywords": [
     "Xendit"
@@ -16,12 +19,39 @@
   "author": "Bo",
   "license": "ISC",
   "dependencies": {
+    "@hapi/joi": "^15.0.2",
     "body-parser": "^1.19.0",
     "express": "^4.16.4",
-    "sqlite3": "^4.0.6"
+    "joi": "^14.3.1",
+    "sqlite3": "^4.0.6",
+    "swagger-ui-express": "^4.0.2",
+    "winston": "^3.2.1"
   },
   "devDependencies": {
+    "artillery": "^1.6.0-28",
+    "eslint": "^5.16.0",
+    "eslint-config-airbnb": "^17.1.0",
+    "eslint-plugin-import": "^2.17.2",
+    "eslint-plugin-jsx-a11y": "^6.2.1",
+    "eslint-plugin-react": "^7.13.0",
+    "forever": "^1.0.0",
     "mocha": "^6.1.4",
+    "nyc": "^14.1.1",
+    "pre-push": "^0.1.1",
+    "sinon": "^7.3.2",
     "supertest": "^4.0.2"
+  },
+  "nyc": {
+    "per-file": false,
+    "lines": 80,
+    "statements": 80,
+    "functions": 80,
+    "branches": 80,
+    "reporter": [
+      "lcov"
+    ],
+    "exclude": [
+      "**/tests/**"
+    ]
   }
 }

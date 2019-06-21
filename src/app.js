@@ -1,15 +1,21 @@
 'use strict';
 
 const express = require('express');
-const app = express();
-
+const swaggerUi = require('swagger-ui-express');
 const bodyParser = require('body-parser');
+const Joi = require('joi');
+const swaggerDoc = require('../swagger.json');
+const repo = require('./repo');
+
+const app = express();
 const jsonParser = bodyParser.json();
 
 module.exports = (db) => {
+    app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDoc));
+
     app.get('/health', (req, res) => res.send('Healthy'));
 
-    app.post('/rides', jsonParser, (req, res) => {
+    app.post('/rides', jsonParser, async (req, res) => {
         const startLatitude = Number(req.body.start_lat);
         const startLongitude = Number(req.body.start_long);
         const endLatitude = Number(req.body.end_lat);
@@ -42,78 +48,156 @@ module.exports = (db) => {
         if (typeof driverName !== 'string' || driverName.length < 1) {
             return res.send({
                 error_code: 'VALIDATION_ERROR',
-                message: 'Rider name must be a non empty string'
+                message: 'Driver name must be a non empty string'
             });
         }
 
         if (typeof driverVehicle !== 'string' || driverVehicle.length < 1) {
             return res.send({
                 error_code: 'VALIDATION_ERROR',
-                message: 'Rider name must be a non empty string'
+                message: 'Driver vehicle must be a non empty string'
             });
         }
 
-        var values = [req.body.start_lat, req.body.start_long, req.body.end_lat, req.body.end_long, req.body.rider_name, req.body.driver_name, req.body.driver_vehicle];
-        
-        const result = db.run('INSERT INTO Rides(startLat, startLong, endLat, endLong, riderName, driverName, driverVehicle) VALUES (?, ?, ?, ?, ?, ?, ?)', values, function (err) {
-            if (err) {
-                return res.send({
+        const values = [
+            req.body.start_lat,
+            req.body.start_long,
+            req.body.end_lat,
+            req.body.end_long,
+            req.body.rider_name,
+            req.body.driver_name,
+            req.body.driver_vehicle
+        ];
+
+        let response;
+        let isError = false;
+        const insertResult = await repo.insert(db, values)
+            .catch((err) => {
+                response = {
                     error_code: 'SERVER_ERROR',
-                    message: 'Unknown error'
-                });
-            }
-
-            db.all('SELECT * FROM Rides WHERE rideID = ?', this.lastID, function (err, rows) {
-                if (err) {
-                    return res.send({
-                        error_code: 'SERVER_ERROR',
-                        message: 'Unknown error'
-                    });
-                }
-
-                res.send(rows);
+                    message: 'Unknown Error'
+                };
+                isError = true;
             });
-        });
+        if (!isError) {
+            const rows = await repo.get(db, insertResult.lastID)
+                .catch((err) => {
+                    response = {
+                        error_code: 'SERVER_ERROR',
+                        message: 'Unknown Error'
+                    };
+                    isError = true;
+                });
+            response = rows;
+        }
+
+        return res.send(response);
     });
 
-    app.get('/rides', (req, res) => {
-        db.all('SELECT * FROM Rides', function (err, rows) {
-            if (err) {
-                return res.send({
-                    error_code: 'SERVER_ERROR',
-                    message: 'Unknown error'
-                });
-            }
-
-            if (rows.length === 0) {
-                return res.send({
-                    error_code: 'RIDES_NOT_FOUND_ERROR',
-                    message: 'Could not find any rides'
-                });
-            }
-
-            res.send(rows);
+    app.get('/rides', async (req, res) => {
+        let response;
+        let isError = false;
+        const ridesSchema = Joi.object().keys({
+            page: Joi.number().positive().optional().default(1),
+            limit: Joi.number().positive().optional().default(10)
         });
+
+        const input = await Joi.validate(req.query, ridesSchema)
+            .catch((err) => {
+                response = {
+                    error_code: 'VALIDATION_ERROR',
+                    message: err.message
+                };
+                isError = true;
+            });
+
+        if (isError) {
+            return res.send(response);
+        }
+        const {
+            page,
+            limit
+        } = input;
+        const offset = (page - 1) * limit;
+
+        const data = await repo.getAll(db, offset, limit)
+            .catch((err) => {
+                response = {
+                    error_code: 'SERVER_ERROR',
+                    message: 'Unknown Error'
+                };
+                isError = true;
+            });
+
+        const count = await repo.count(db)
+            .catch((err) => {
+                response = {
+                    error_code: 'SERVER_ERROR',
+                    message: 'Unknown Error'
+                };
+                isError = true;
+            });
+
+        if (!isError && count === 0) {
+            return res.send({
+                error_code: 'RIDES_NOT_FOUND_ERROR',
+                message: 'Could not find any rides'
+            });
+        }
+
+        if (!isError) {
+            response = {
+                data,
+                meta: {
+                    page,
+                    limit,
+                    total_data: count,
+                    total_page: Math.ceil(count / limit)
+                }
+            };
+        }
+        return res.send(response);
     });
 
-    app.get('/rides/:id', (req, res) => {
-        db.all(`SELECT * FROM Rides WHERE rideID='${req.params.id}'`, function (err, rows) {
-            if (err) {
-                return res.send({
-                    error_code: 'SERVER_ERROR',
-                    message: 'Unknown error'
-                });
-            }
-
-            if (rows.length === 0) {
-                return res.send({
-                    error_code: 'RIDES_NOT_FOUND_ERROR',
-                    message: 'Could not find any rides'
-                });
-            }
-
-            res.send(rows);
+    app.get('/rides/:id', async (req, res) => {
+        let response;
+        let isError = false;
+        const rideSchema = Joi.object().keys({
+            id: Joi.number().positive().required()
         });
+
+        const input = await Joi.validate(req.params, rideSchema)
+            .catch((err) => {
+                response = {
+                    error_code: 'VALIDATION_ERROR',
+                    message: err.message
+                };
+                isError = true;
+            });
+
+        if (isError) {
+            return res.send(response);
+        }
+
+        const rows = await repo.get(db, input.id)
+            .catch((err) => {
+                response = {
+                    error_code: 'SERVER_ERROR',
+                    message: 'Unknown Error'
+                };
+                isError = true;
+            });
+
+        if (!isError && rows.length === 0) {
+            return res.send({
+                error_code: 'RIDES_NOT_FOUND_ERROR',
+                message: 'Could not find any rides'
+            });
+        }
+        if (!isError) {
+            [response] = rows;
+        }
+        return res.send(response);
     });
 
     return app;
